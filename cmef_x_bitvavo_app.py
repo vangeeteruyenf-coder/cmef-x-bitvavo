@@ -112,7 +112,7 @@ def portfolio_recommendation(rar_score, profile):
 # ---------------------------
 # Batch analyse
 # ---------------------------
-def batch_analyze(markets, alpha):
+def batch_analyze(markets, alpha, profile):
     results=[]
     price_max=0
     volume_max=0
@@ -176,12 +176,11 @@ if mode=="Enkele coin":
             st.error("Kon data niet ophalen.")
 else:
     if st.button("Batch analyse alle coins"):
-        df_batch = batch_analyze(eur_markets, alpha)
+        df_batch = batch_analyze(eur_markets, alpha, profile)
         st.dataframe(df_batch.sort_values('RAR-Score',ascending=False))
         st.download_button("Exporteer naar CSV",
                            df_batch.sort_values('RAR-Score',ascending=False).to_csv(index=False).encode('utf-8'),
                            "cmef_x_batch.csv","text/csv")
-        # Visualisatie
         fig = px.bar(df_batch.sort_values('RAR-Score',ascending=False).head(20),
                      x='Market', y='RAR-Score', color='RAR-Score', title="Top 20 RAR-Score Coins")
         st.plotly_chart(fig, use_container_width=True)
