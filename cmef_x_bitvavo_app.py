@@ -1,4 +1,4 @@
-# cmef_x_bitvavo_full.py
+# cmef_x_bitvavo_full_test.py
 import streamlit as st
 import pandas as pd
 import requests
@@ -11,26 +11,36 @@ BITVAVO_API_URL = "https://api.bitvavo.com/v2"
 # Helper functies
 # ---------------------------
 def fetch_eur_markets():
+    """Haal alle EUR-markets op van Bitvavo"""
     try:
-        resp = requests.get(f"{BITVAVO_API_URL}/markets")
+        resp = requests.get(f"{BITVAVO_API_URL}/markets", timeout=5)
         resp.raise_for_status()
         markets = resp.json()
-        eur_markets = [m['market'] for m in markets if m['quote']=='EUR']
+        eur_markets = [m['market'] for m in markets if m['quote'] == 'EUR']
         return eur_markets
     except Exception as e:
         st.error(f"Kan Bitvavo markets niet ophalen: {e}")
         return []
 
-def fetch_ticker(market):
-    try:
-        resp = requests.get(f"{BITVAVO_API_URL}/{market}/ticker")
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        return {'price': float(data.get('last',0)), 'volume': float(data.get('volume',0))}
-    except Exception as e:
-        st.error(f"Fout bij ophalen ticker {market}: {e}")
-        return None
+def fetch_ticker(market, retries=3):
+    """Haalt live prijs en volume op met retry en logging"""
+    for attempt in range(1, retries+1):
+        try:
+            resp = requests.get(f"{BITVAVO_API_URL}/{market}/ticker", timeout=5)
+            if resp.status_code != 200:
+                st.warning(f"Attempt {attempt} voor {market} mislukte: status {resp.status_code}")
+                time.sleep(1)
+                continue
+            data = resp.json()
+            if 'last' not in data or 'volume' not in data:
+                st.warning(f"Attempt {attempt} voor {market} bevat geen data: {data}")
+                time.sleep(1)
+                continue
+            return {'price': float(data['last']), 'volume': float(data['volume'])}
+        except Exception as e:
+            st.warning(f"Attempt {attempt} voor {market} exception: {e}")
+            time.sleep(1)
+    return None
 
 def normalize(value, min_val, max_val):
     return min(max((value - min_val)/(max_val - min_val),0),1)*5
@@ -41,18 +51,40 @@ def compute_scores(data, alpha):
     K = normalize(data['price'],0.01,60000)
     M = normalize(data['volume'],0.01,1e9)
     OTS = K*alpha + M*(1-alpha)
-    R = 0.5  # vereenvoudigd risico
+    R = 0.5
     RAR = OTS*(1-R)
     return {'K':round(K,2),'M':round(M,2),'OTS':round(OTS,2),'R':round(R,2),'RAR':round(RAR,2)}
 
-def batch_analyze(markets, alpha):
+# ---------------------------
+# Testfunctie per coin
+# ---------------------------
+def test_coin(market):
+    st.subheader(f"🔍 Test coin: {market}")
+    # 1️⃣ Check market aanwezig
+    eur_markets = fetch_eur_markets()
+    if market not in eur_markets:
+        st.error(f"{market} niet gevonden in EUR-markets!")
+        return None
+    st.success(f"{market} aanwezig in EUR-markets.")
+    
+    # 2️⃣ Fetch ticker met retry
+    data = fetch_ticker(market)
+    if not data:
+        st.error(f"⚠️ Kon data niet ophalen voor {market}.")
+        return None
+    st.success(f"✅ Ticker data opgehaald: {data}")
+    return data
+
+# ---------------------------
+# Batch analyse met debug
+# ---------------------------
+def batch_analyze_debug(markets, alpha):
     results=[]
     for market in markets:
-        data=fetch_ticker(market)
+        data = test_coin(market)
         if not data:
-            st.warning(f"⚠️ Kon data niet ophalen voor {market}")
             continue
-        scores=compute_scores(data, alpha)
+        scores = compute_scores(data, alpha)
         results.append({
             'Market':market,
             'Price':data['price'],
@@ -62,12 +94,12 @@ def batch_analyze(markets, alpha):
             'OTS':scores['OTS'],
             'R-Score':scores['R'],
             'RAR-Score':scores['RAR'],
-            # CMEF X AI placeholders:
             'AI_Profile':'[AI]',
             'AI_Rationale':'[AI: rationale]',
-            'K-Criteria':'[AI]',
-            'M-Criteria':'[AI]',
-            'Risk_Criteria':'[AI]'
+            'Section_A':'[AI placeholders]',
+            'Section_B':'[AI placeholders]',
+            'Risk_Analysis':'[AI placeholders]',
+            'Portfolio_Recommendation':'[AI placeholders]'
         })
         time.sleep(0.2)
     return pd.DataFrame(results)
@@ -75,72 +107,45 @@ def batch_analyze(markets, alpha):
 # ---------------------------
 # Streamlit UI
 # ---------------------------
-st.set_page_config(page_title="CMEF X Bitvavo Full Tool", layout="wide")
-st.title("CMEF X Crypto Analysis Tool (Bitvavo)")
+st.set_page_config(page_title="CMEF X Bitvavo Full Test", layout="wide")
+st.title("CMEF X Crypto Analysis Tool (Bitvavo) - Test Mode")
 
 # Datum & tijd
 st.write("**Analyse datum & tijd:**", datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
 
 # Profiel selectie
-profile=st.selectbox("Kies profiel", ["Conservative","Balanced","Growth"])
-alpha_dict={"Conservative":0.7,"Balanced":0.6,"Growth":0.5}
-alpha=alpha_dict[profile]
-
-# EUR-markets ophalen
-with st.spinner("Ophalen van EUR-markets..."):
-    eur_markets=fetch_eur_markets()
-    if not eur_markets:
-        st.error("Geen EUR-markets gevonden. Controleer Bitvavo API.")
-        st.stop()
+profile = st.selectbox("Kies profiel", ["Conservative","Balanced","Growth"])
+alpha_dict = {"Conservative":0.7,"Balanced":0.6,"Growth":0.5}
+alpha = alpha_dict[profile]
 
 # Analyse modus
-mode=st.radio("Analyse modus", ["Enkele coin","Batch alle coins"])
+mode = st.radio("Analyse modus", ["Enkele coin","Batch alle coins"])
+
+# Ophalen EUR-markets
+eur_markets = fetch_eur_markets()
+if not eur_markets:
+    st.error("Geen EUR-markets gevonden. Controleer Bitvavo API.")
+    st.stop()
 
 if mode=="Enkele coin":
-    market=st.selectbox("Kies een cryptocurrency (EUR-paar)",eur_markets)
-    if st.button("Analyseer Coin"):
-        data=fetch_ticker(market)
-        if not data or data['price']==0:
-            st.error(f"⚠️ Kon data niet ophalen voor {market}. Raw data: {data}")
+    market = st.selectbox("Kies cryptocurrency (EUR-paar)", eur_markets)
+    if st.button("Test & Analyseer Coin"):
+        data = test_coin(market)
+        if not data:
             st.stop()
-        st.write("✅ Raw data:",data)
-        scores=compute_scores(data,alpha)
-        st.success("Analyse klaar!")
-
-        # CMEF X placeholders
-        st.subheader("CMEF X AI-Ready Crypto Analysis")
-        st.write(f"Profile: {profile} | α={alpha}")
+        scores = compute_scores(data, alpha)
         st.write("K-Score:",scores['K'],"M-Score:",scores['M'],"OTS:",scores['OTS'],
                  "R-Score:",scores['R'],"RAR-Score:",scores['RAR'])
-        st.write("Section A & B: [AI placeholders for detailed criteria]")
-        st.write("Risk Analysis: [AI placeholders]")
-        st.write("Portfolio Recommendation: [AI placeholders]")
-
-        # Visualisatie
-        st.subheader("Visualisatie Scores")
-        for metric in ['K','M','RAR']:
-            st.write(f"{metric}-Score:")
-            st.progress(min(int(scores[metric]/5*100),100))
-
-        # CSV-export
-        if st.button("Exporteer naar CSV"):
-            df=pd.DataFrame([scores])
-            df.index=[market]
-            filename=f"{market.replace('-','_')}_cmef_x_full.csv"
-            df.to_csv(filename)
-            st.success(f"CSV opgeslagen: {filename}")
-
-else: # Batch modus
-    if st.button("Batch analyseer alle EUR-coins"):
-        with st.spinner("Batch-analyse gestart... kan enkele seconden duren"):
-            df_batch=batch_analyze(eur_markets,alpha)
+        st.progress(min(int(scores['RAR']/5*100),100))
+else:
+    if st.button("Batch test & analyseer alle EUR-coins"):
+        df_batch = batch_analyze_debug(eur_markets, alpha)
         if df_batch.empty:
             st.error("Geen resultaten opgehaald.")
         else:
             st.success(f"Batch-analyse klaar! {len(df_batch)} coins geanalyseerd.")
             st.dataframe(df_batch.sort_values('RAR-Score',ascending=False))
-            # CSV-export
             if st.button("Exporteer batch naar CSV"):
-                filename="cmef_x_batch_full.csv"
+                filename="cmef_x_batch_full_test.csv"
                 df_batch.to_csv(filename,index=False)
                 st.success(f"CSV opgeslagen: {filename}")
