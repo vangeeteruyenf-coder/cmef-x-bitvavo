@@ -4,91 +4,89 @@ from datetime import datetime
 import pandas as pd
 
 # ---------------------------
-# Config / Mapping
+# Configuration
 # ---------------------------
 BITVAVO_API_URL = "https://api.bitvavo.com/v2"
 COINGECKO_API_URL = "https://api.coingecko.com/api/v3"
 
-# Cryptocurrency mapping: full name -> symbol -> CoinGecko ID
-CRYPTO_MAP = {
-    "Bitcoin": {"symbol": "BTC", "coingecko_id": "bitcoin"},
-    "Ethereum": {"symbol": "ETH", "coingecko_id": "ethereum"},
-    "Cardano": {"symbol": "ADA", "coingecko_id": "cardano"},
-    "Binance Coin": {"symbol": "BNB", "coingecko_id": "binancecoin"},
-    "Solana": {"symbol": "SOL", "coingecko_id": "solana"},
-    "Ripple": {"symbol": "XRP", "coingecko_id": "ripple"},
-    "Dogecoin": {"symbol": "DOGE", "coingecko_id": "dogecoin"},
-    "Polkadot": {"symbol": "DOT", "coingecko_id": "polkadot"},
-    "Litecoin": {"symbol": "LTC", "coingecko_id": "litecoin"},
-    "Chainlink": {"symbol": "LINK", "coingecko_id": "chainlink"}
+# Supported coins mapping: full name -> Bitvavo ticker
+COINS = {
+    "Bitcoin": "BTC-EUR",
+    "Ethereum": "ETH-EUR",
+    "Cardano": "ADA-EUR",
+    "Aave": "AAVE-EUR",
+    "Polygon": "MATIC-EUR"
 }
-
-# Investment profile alpha values
-PROFILE_ALPHA = {"Conservative": 0.7, "Balanced": 0.6, "Growth": 0.5}
 
 # ---------------------------
 # Helper functions
 # ---------------------------
-def fetch_bitvavo_ticker(symbol):
-    market = f"{symbol}-EUR"
-    url = f"{BITVAVO_API_URL}/ticker/24h?market={market}"
+def fetch_bitvavo_ticker(ticker):
     try:
-        resp = requests.get(url, timeout=5)
-        resp.raise_for_status()
+        resp = requests.get(f"{BITVAVO_API_URL}/{ticker}/ticker", timeout=5)
+        if resp.status_code != 200:
+            return None
         data = resp.json()
-        return {"price": float(data.get("last", 0)), "volume": float(data.get("volume",0))}
-    except Exception:
-        return None
-
-def fetch_coingecko_data(coin_id):
-    url = f"{COINGECKO_API_URL}/coins/{coin_id}?localization=false&market_data=true&community_data=true"
-    try:
-        resp = requests.get(url, timeout=5)
-        resp.raise_for_status()
-        data = resp.json()
-        market_data = data.get("market_data", {})
-        community_data = data.get("community_data", {})
         return {
-            "market_cap": market_data.get("market_cap", {}).get("eur", 0),
-            "price_30d_change": market_data.get("price_change_percentage_30d", 0),
-            "community_score": ((community_data.get("twitter_followers",0)/1e6)*0.5 + (community_data.get("reddit_subscribers",0)/1e5)*0.5)
+            "price": float(data["last"]),
+            "volume": float(data["volume"])
         }
-    except Exception:
+    except:
         return None
 
-def compute_cmef_scores(ticker_data, coingecko_data, profile):
-    alpha = PROFILE_ALPHA.get(profile, 0.6)
-    
-    # K-Score (Investment Quality)
-    market_cap_score = min(coingecko_data["market_cap"]/1e10,5) if coingecko_data else 0
-    liquidity_score = min(ticker_data["volume"]/1e6,5) if ticker_data else 0
-    perf_score = min(max(coingecko_data.get("price_30d_change",0)/10,0),5) if coingecko_data else 0
-    K = round((market_cap_score + liquidity_score + perf_score)/3,2)
-    
-    # M-Score (Growth Potential)
-    dev_score = 2.5  # placeholder; can be extended with GitHub
-    community_score = coingecko_data["community_score"] if coingecko_data else 0
-    incentives_score = 2.5
-    M = round((dev_score + community_score + incentives_score)/3,2)
-    
-    # OTS: α-weighted K/M
-    OTS = round(K*alpha + M*(1-alpha),2)
-    
-    # R-Score: Risk
-    R_tech = 0.5
-    R_reg = 0.3
-    R_fin = 0.4
-    R = round(R_tech*0.4 + R_reg*0.35 + R_fin*0.25,2)
-    
-    # RAR: Risk-adjusted
-    RAR = round(OTS*(1-R),2)
-    
-    return {
-        "K": K, "M": M, "OTS": OTS, "R": R, "RAR": RAR,
-        "K_components": {"Market Cap": market_cap_score, "Liquidity": liquidity_score, "30d Perf": perf_score},
-        "M_components": {"Dev": dev_score, "Community": community_score, "Incentives": incentives_score},
-        "R_components": {"Tech": R_tech, "Reg": R_reg, "Fin": R_fin}
+def fetch_coingecko_data(coin_name):
+    # Resolve coin ID automatically
+    try:
+        resp = requests.get(f"{COINGECKO_API_URL}/coins/list", timeout=5)
+        coins_list = resp.json()
+        coin_id = None
+        for c in coins_list:
+            if c['name'].lower() == coin_name.lower():
+                coin_id = c['id']
+                break
+        if not coin_id:
+            return None, None
+
+        market_resp = requests.get(f"{COINGECKO_API_URL}/coins/{coin_id}", timeout=5)
+        market_data = market_resp.json()
+        return coin_id, market_data
+    except:
+        return None, None
+
+def compute_K_score(market_data, price, volume):
+    # Simplified weighted scoring for demonstration
+    scores = {
+        "Market Cap": min(market_data.get('market_data', {}).get('market_cap', {}).get('eur',0)/1e12,5),
+        "Liquidity": min(volume/1e9,5),
+        "30d Perf": min(abs(market_data.get('market_data', {}).get('price_change_percentage_30d',0))/10,5)
     }
+    K = sum([v for v in scores.values()])/len(scores)
+    return K, scores
+
+def compute_M_score(market_data):
+    # Placeholder scores (community, developer activity, incentives)
+    scores = {
+        "Dev": 2.5,
+        "Community": min((market_data.get('community_data', {}).get('twitter_followers',0))/1e6,5),
+        "Incentives": 2.5
+    }
+    M = sum([v for v in scores.values()])/len(scores)
+    return M, scores
+
+def compute_R_score():
+    scores = {
+        "Technical": 0.5,
+        "Regulatory": 0.3,
+        "Financial": 0.4
+    }
+    R = sum([scores['Technical']*0.4, scores['Regulatory']*0.35, scores['Financial']*0.25])
+    R /= 5
+    return R, scores
+
+def compute_OTS_RAR(K, M, alpha, R):
+    OTS = K*alpha + M*(1-alpha)
+    RAR = OTS*(1-R)
+    return OTS, RAR
 
 def portfolio_recommendation(RAR, profile):
     if RAR >= 65:
@@ -109,83 +107,76 @@ def portfolio_recommendation(RAR, profile):
 st.set_page_config(page_title="CMEF X — Free Crypto Analysis Dashboard", layout="wide")
 st.title("🪙 CMEF X — Free Crypto Analysis Dashboard")
 
-# User Inputs
-profile = st.selectbox("Select investment profile", list(PROFILE_ALPHA.keys()))
-crypto_name = st.selectbox("Select cryptocurrency (full name)", list(CRYPTO_MAP.keys()))
-crypto_symbol = CRYPTO_MAP[crypto_name]["symbol"]
-coin_id = CRYPTO_MAP[crypto_name]["coingecko_id"]
+# Step 1: User Inputs
+coin_name = st.selectbox("Select Cryptocurrency:", list(COINS.keys()))
+profile = st.selectbox("Select Investment Profile:", ["Conservative","Balanced","Growth"])
+alpha_dict = {"Conservative":0.7,"Balanced":0.5,"Growth":0.3}
+alpha = alpha_dict[profile]
 
 if st.button("Generate CMEF X Report"):
+    ticker = COINS[coin_name]
+    st.info(f"Fetching live market data for {coin_name} ({ticker})...")
+
     # Fetch live data
-    ticker_data = fetch_bitvavo_ticker(crypto_symbol)
-    coingecko_data = fetch_coingecko_data(coin_id)
+    ticker_data = fetch_bitvavo_ticker(ticker)
+    coin_id, market_data = fetch_coingecko_data(coin_name)
 
-    debug_messages = []
-    if ticker_data is None:
-        debug_messages.append("Could not fetch Bitvavo ticker; using CoinGecko only if available.")
-    if coingecko_data is None:
-        debug_messages.append("Could not fetch CoinGecko data; some metrics may be defaulted.")
-
-    if ticker_data is None and coingecko_data is None:
-        st.error("Could not fetch live data. Check your connection or select another coin.")
+    if not ticker_data or not market_data:
+        st.error(f"Could not fetch live data for {coin_name}. Check your connection or select another coin.")
     else:
+        price = ticker_data['price']
+        volume = ticker_data['volume']
+
         # Compute scores
-        scores = compute_cmef_scores(ticker_data, coingecko_data, profile)
-        
-        # Live Market Overview
-        st.subheader("📊 Live Market Data")
-        st.markdown(f"**Market:** {crypto_symbol}-EUR")
-        st.markdown(f"**Current Price (EUR):** €{ticker_data['price']:.2f}" if ticker_data else "**Current Price:** N/A")
-        st.markdown(f"**24h Volume (EUR):** €{ticker_data['volume']:.2f}" if ticker_data else "**24h Volume:** N/A")
-        st.markdown(f"**Market Cap (EUR):** €{coingecko_data['market_cap']:.2f}" if coingecko_data else "**Market Cap:** N/A")
-        
-        # CMEF X Scores with Explanations
-        st.subheader("📈 CMEF X Scores & Analysis")
-        for key in ["K","M","OTS","R","RAR"]:
-            value = scores[key]
-            st.progress(min(value/5,1) if key!="R" else min(value/1,1))
-            if key == "K":
-                st.markdown(f"**K-Score (Investment Quality): {value}/5**")
-                st.markdown("Definition: Measures the current investment quality based on market cap, liquidity, and recent performance.")
-                st.markdown(f"Rationale for {crypto_name}: Market Cap={scores['K_components']['Market Cap']:.2f}, Liquidity={scores['K_components']['Liquidity']:.2f}, 30d Performance={scores['K_components']['30d Perf']:.2f}")
-            elif key == "M":
-                st.markdown(f"**M-Score (Growth Potential): {value}/5**")
-                st.markdown("Definition: Measures long-term growth potential based on developer activity, community strength, and incentives.")
-                st.markdown(f"Rationale for {crypto_name}: Dev={scores['M_components']['Dev']:.2f}, Community={scores['M_components']['Community']:.2f}, Incentives={scores['M_components']['Incentives']:.2f}")
-            elif key == "OTS":
-                st.markdown(f"**OTS (Overall Technical Strength): {value}/5**")
-                st.markdown("Definition: α-weighted combination of K-Score and M-Score based on investment profile.")
-            elif key == "R":
-                st.markdown(f"**R-Score (Risk): {value} (0..1)**")
-                st.markdown("Definition: Measures combined technical, regulatory, and financial risk.")
-                st.markdown(f"Components: Tech={scores['R_components']['Tech']}, Reg={scores['R_components']['Reg']}, Fin={scores['R_components']['Fin']}")
-            elif key == "RAR":
-                st.markdown(f"**RAR (Risk-Adjusted Return): {value}/5**")
-                st.markdown("Definition: Risk-adjusted score, combines OTS with R-Score to adjust for potential risk.")
+        K, K_components = compute_K_score(market_data, price, volume)
+        M, M_components = compute_M_score(market_data)
+        R, R_components = compute_R_score()
+        OTS, RAR = compute_OTS_RAR(K*20, M*20, alpha, R)  # scale K/M to % for OTS/RAR
 
-        # Portfolio Recommendation
-        rec = portfolio_recommendation(scores["RAR"], profile)
-        st.subheader("💼 Portfolio Recommendation")
-        st.markdown(f"Suggested action for profile **{profile}**: **{rec}**")
+        # Portfolio recommendation
+        recommendation = portfolio_recommendation(RAR, profile)
 
-        # Full CMEF X Report
-        st.subheader("📖 Full CMEF X Report")
-        st.markdown(f"- Coin: {crypto_name} ({crypto_symbol})")
-        st.markdown(f"- Profile: {profile} (α = {PROFILE_ALPHA[profile]})")
-        st.markdown(f"- Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        st.markdown(f"- K-Score: {scores['K']}/5 | Components: {scores['K_components']}")
-        st.markdown(f"- M-Score: {scores['M']}/5 | Components: {scores['M_components']}")
-        st.markdown(f"- OTS: {scores['OTS']}/5")
-        st.markdown(f"- R-Score: {scores['R']} | Components: {scores['R_components']}")
-        st.markdown(f"- RAR: {scores['RAR']}/5")
-        
-        # Debug messages (if any)
-        if debug_messages:
-            with st.expander("🔧 Debug / Raw Data"):
-                for msg in debug_messages:
-                    st.warning(msg)
-                st.json({
-                    "ticker_data": ticker_data,
-                    "coingecko_data": coingecko_data,
-                    "scores": scores
-                })
+        # ---------------------------
+        # Display Report
+        # ---------------------------
+        st.header(f"📊 CMEF X Scores & Analysis — {coin_name}")
+        st.subheader("Live Market Data")
+        st.markdown(f"- **Ticker:** {ticker}")
+        st.markdown(f"- **Current Price (EUR):** €{price:,.2f}")
+        st.markdown(f"- **24h Volume (EUR):** €{volume:,.2f}")
+        st.markdown(f"- **CoinGecko Market Cap (EUR):** €{market_data.get('market_data', {}).get('market_cap', {}).get('eur',0):,.2f}")
+
+        st.subheader("K-Score (Investment Quality)")
+        st.markdown(f"- **Score:** {K:.2f}/5")
+        st.markdown("- **Definition:** Measures the current investment quality based on market cap, liquidity, and recent performance.")
+        st.markdown(f"- **Components & rationale:** {K_components}")
+
+        st.subheader("M-Score (Growth Potential)")
+        st.markdown(f"- **Score:** {M:.2f}/5")
+        st.markdown("- **Definition:** Measures long-term growth potential based on developer activity, community strength, and incentives.")
+        st.markdown(f"- **Components & rationale:** {M_components}")
+
+        st.subheader("OTS & RAR")
+        st.markdown(f"- **OTS (Overall Technical Strength):** {OTS:.2f}/100")
+        st.markdown(f"- **R-Score (Risk):** {R:.2f} (0..1)")
+        st.markdown(f"- **RAR (Risk-Adjusted Return):** {RAR:.2f}/100")
+
+        st.subheader("Portfolio Recommendation")
+        st.markdown(f"- Suggested action for profile {profile}: {recommendation}")
+
+        st.subheader("Analytical Thesis")
+        st.markdown(f"- Bitcoin shows strong K (~{K:.2f}) and M (~{M:.2f}) indicating solid quality and potential.")
+        st.markdown(f"- Risk factor R={R:.2f} reduces effective RAR to {RAR:.2f}. Caution advised for profile {profile}.")
+
+        st.subheader("Report Generated")
+        st.markdown(f"- **Profile α weighting:** {alpha}")
+        st.markdown(f"- **Generated at:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        st.expander("🔧 Debug / Raw Data", expanded=False)
+        st.json({
+            "Bitvavo Ticker Data": ticker_data,
+            "CoinGecko Market Data": {k: market_data.get(k, None) for k in ["market_data","community_data"]},
+            "K Components": K_components,
+            "M Components": M_components,
+            "R Components": R_components
+        })
