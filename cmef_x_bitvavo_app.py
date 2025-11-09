@@ -1,4 +1,4 @@
-# cmef_x_bitvavo_app.py
+## cmef_x_bitvavo_app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -18,19 +18,21 @@ def fetch_bitvavo_assets():
         data = response.json()
         # Retouneer alleen symbolen van coins
         return [asset['symbol'] for asset in data]
-    except:
+    except Exception as e:
+        st.error(f"Fout bij ophalen assets: {e}")
         return []
 
 def fetch_bitvavo_price(symbol):
-    """Haalt actuele prijs en volume op van een coin"""
+    """Haalt actuele prijs en volume op van een coin in EUR"""
     try:
         url = f"{BITVAVO_API_URL}/{symbol}-EUR/ticker"
         response = requests.get(url)
-        response.raise_for_status()
+        if response.status_code != 200:
+            return None
         data = response.json()
         return {
-            'price': float(data['last']),
-            'volume': float(data['volume'])
+            'price': float(data.get('last', 0)),
+            'volume': float(data.get('volume', 0))
         }
     except:
         return None
@@ -73,10 +75,23 @@ else:
     if st.button("Analyseer Coin"):
         st.info(f"Ophalen van prijs/volume voor {coin}…")
         data = fetch_bitvavo_price(coin)
-        time.sleep(0.5)  # korte pauze
+        time.sleep(0.5)  # korte pauze voor API-limiet
+
+        # Extra check of data bestaat
+        if data is None or data['price'] == 0:
+            st.error(f"{coin} heeft geen EUR-markt of kon niet worden opgehaald.")
+            st.stop()
+
+        # Debug info tonen
+        st.write("Raw data:", data)
 
         # Scores berekenen
-        K, M, OTS, R, RAR = calculate_scores(data, alpha)
+        try:
+            K, M, OTS, R, RAR = calculate_scores(data, alpha)
+        except Exception as e:
+            st.error(f"Fout bij berekenen scores: {e}")
+            st.stop()
+
         st.success("Analyse klaar!")
 
         # Tabel tonen
