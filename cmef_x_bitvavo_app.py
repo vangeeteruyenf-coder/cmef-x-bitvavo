@@ -1,4 +1,4 @@
-# cmef_x_bitvavo_full_debug.py
+# cmef_x_bitvavo_full_dynamic.py
 import streamlit as st
 import pandas as pd
 import requests
@@ -57,14 +57,12 @@ def fetch_ticker(market, retries=3):
     st.error(f"⚠️ Kon data niet ophalen voor {market} na {retries} attempts")
     return None
 
-def normalize(value, min_val, max_val):
-    return min(max((value - min_val)/(max_val - min_val),0),1)*5
-
-def compute_scores(data, alpha):
+def compute_scores_dynamic(data, alpha, price_max, volume_max):
+    """Bereken K/M/OTS/RAR scores met dynamische scaling"""
     if not data or data['price']==0:
         return {'K':0,'M':0,'OTS':0,'R':0,'RAR':0}
-    K = normalize(data['price'],0.01,60000)
-    M = normalize(data['volume'],0.01,1e9)
+    K = min(max(data['price']/price_max,0),1)*5
+    M = min(max(data['volume']/volume_max,0),1)*5
     OTS = K*alpha + M*(1-alpha)
     R = 0.5
     RAR = OTS*(1-R)
@@ -73,35 +71,48 @@ def compute_scores(data, alpha):
 # ---------------------------
 # Testfunctie per coin
 # ---------------------------
-def test_coin(market):
+def test_coin(market, price_max, volume_max, alpha):
     st.subheader(f"🔍 Test coin: {market}")
-    eur_markets = fetch_eur_markets()
-    if market not in eur_markets:
-        st.error(f"{market} niet gevonden in EUR-markets!")
-        return None
-    st.success(f"{market} aanwezig in EUR-markets.")
-    
     data = fetch_ticker(market)
     if not data:
         st.error(f"⚠️ Kon data niet ophalen voor {market}.")
         return None
     st.success(f"✅ Ticker data opgehaald: {data}")
-    return data
+    scores = compute_scores_dynamic(data, alpha, price_max, volume_max)
+    st.write("K-Score:",scores['K'],"M-Score:",scores['M'],"OTS:",scores['OTS'],
+             "R-Score:",scores['R'],"RAR-Score:",scores['RAR'])
+    return {'data':data, 'scores':scores}
 
 # ---------------------------
 # Batch analyse met debug
 # ---------------------------
 def batch_analyze_debug(markets, alpha):
     results=[]
+    st.info("🔄 Bepaal dynamische max prijs/volume voor scaling...")
+    price_max = 0
+    volume_max = 0
+    # Eerste loop: bepaal max price & volume
+    tickers = {}
     for market in markets:
-        data = test_coin(market)
-        if not data:
+        ticker = fetch_ticker(market)
+        if ticker:
+            tickers[market] = ticker
+            price_max = max(price_max, ticker['price'])
+            volume_max = max(volume_max, ticker['volume'])
+        time.sleep(0.1)
+    st.info(f"Dynamische max price: {price_max}, max volume: {volume_max}")
+
+    # Tweede loop: bereken scores
+    for market in markets:
+        ticker = tickers.get(market)
+        if not ticker:
+            st.warning(f"Data niet beschikbaar voor {market}, overslaan")
             continue
-        scores = compute_scores(data, alpha)
+        scores = compute_scores_dynamic(ticker, alpha, price_max, volume_max)
         results.append({
             'Market':market,
-            'Price':data['price'],
-            'Volume':data['volume'],
+            'Price':ticker['price'],
+            'Volume':ticker['volume'],
             'K-Score':scores['K'],
             'M-Score':scores['M'],
             'OTS':scores['OTS'],
@@ -114,14 +125,13 @@ def batch_analyze_debug(markets, alpha):
             'Risk_Analysis':'[AI placeholders]',
             'Portfolio_Recommendation':'[AI placeholders]'
         })
-        time.sleep(0.2)
     return pd.DataFrame(results)
 
 # ---------------------------
 # Streamlit UI
 # ---------------------------
-st.set_page_config(page_title="CMEF X Bitvavo Full Debug", layout="wide")
-st.title("CMEF X Crypto Analysis Tool (Bitvavo) - Full Debug")
+st.set_page_config(page_title="CMEF X Bitvavo Dynamic", layout="wide")
+st.title("CMEF X Crypto Analysis Tool (Bitvavo) - Full Dynamic Scaling")
 
 # Datum & tijd
 st.write("**Analyse datum & tijd:**", datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
@@ -143,13 +153,7 @@ if not eur_markets:
 if mode=="Enkele coin":
     market = st.selectbox("Kies cryptocurrency (EUR-paar)", eur_markets)
     if st.button("Test & Analyseer Coin"):
-        data = test_coin(market)
-        if not data:
-            st.stop()
-        scores = compute_scores(data, alpha)
-        st.write("K-Score:",scores['K'],"M-Score:",scores['M'],"OTS:",scores['OTS'],
-                 "R-Score:",scores['R'],"RAR-Score:",scores['RAR'])
-        st.progress(min(int(scores['RAR']/5*100),100))
+        test_coin(market, price_max=60000, volume_max=1e9, alpha=alpha)
 else:
     if st.button("Batch test & analyseer alle EUR-coins"):
         df_batch = batch_analyze_debug(eur_markets, alpha)
@@ -159,6 +163,6 @@ else:
             st.success(f"Batch-analyse klaar! {len(df_batch)} coins geanalyseerd.")
             st.dataframe(df_batch.sort_values('RAR-Score',ascending=False))
             if st.button("Exporteer batch naar CSV"):
-                filename="cmef_x_batch_full_debug.csv"
+                filename="cmef_x_batch_full_dynamic.csv"
                 df_batch.to_csv(filename,index=False)
                 st.success(f"CSV opgeslagen: {filename}")
