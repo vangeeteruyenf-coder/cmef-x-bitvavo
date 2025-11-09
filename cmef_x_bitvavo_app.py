@@ -4,6 +4,7 @@ import requests
 import time
 from datetime import datetime
 import random
+from fpdf import FPDF
 
 # ---------------------------
 # Config
@@ -115,39 +116,62 @@ def portfolio_recommendation(rar_score, profile):
     return scale.get(profile,'Cautious')
 
 # ---------------------------
-# Batch analyse
+# Coin-specifieke toelichting
 # ---------------------------
-def batch_analyze(markets, alpha, profile):
-    results=[]
-    price_max = max(fetch_ticker(m)['price'] for m in markets if fetch_ticker(m))
-    volume_max = max(fetch_ticker(m)['volume'] for m in markets if fetch_ticker(m))
+def generate_coin_explanation(scores, profile):
+    r = scores['Rationale']
+    explanations = {
+        "K-Score": f"Laag omdat de prijs van deze coin ver onder de topcoins ligt ({r['K_Price']:.2f}) en de developer-activiteit is {r['K_Github']:.2f}.",
+        "M-Score": f"Redelijk laag omdat er {r['M_Active']:.0f} actieve wallets zijn en {r['M_TX']:.0f} transacties, ondanks een social activity score van {r['M_Social']:.2f}.",
+        "OTS": f"De Overall Technical Strength is {scores['OTS']:.2f}, wat het resultaat is van de lage K- en M-Scores.",
+        "R-Score": f"Risico score is {scores['R']:.2f}, voornamelijk door technische risico's ({r['R_Tech']:.2f}), regulatoire risico's ({r['R_Reg']:.2f}) en financiële volatiliteit ({r['R_Fin']:.2f}).",
+        "RAR-Score": f"De Risk-Adjusted Result score is {scores['RAR']:.2f}, laag door combinatie van beperkte kwaliteit en matig risico.",
+        "Portfolio-aanbeveling": f"Op basis van de RAR-Score wordt het advies voor dit profiel: {portfolio_recommendation(scores['RAR'], profile)}"
+    }
+    return explanations
+
+# ---------------------------
+# PDF Export functie
+# ---------------------------
+def generate_pdf_report(coin_name, ticker, scores, explanations, profile):
+    pdf = FPDF()
+    pdf.add_page()
     
-    for market in markets:
-        ticker = fetch_ticker(market)
-        if ticker:
-            coin_id = market.split('-')[0].lower()
-            ticker['coin_id'] = coin_id
-            scores = compute_scores(ticker, alpha, price_max, volume_max)
-            rec = portfolio_recommendation(scores['RAR'], profile)
-            results.append({
-                'Market':market,
-                'Price':ticker['price'],
-                'Volume':ticker['volume'],
-                'K-Score':scores['K'],
-                'M-Score':scores['M'],
-                'OTS':scores['OTS'],
-                'R-Score':scores['R'],
-                'RAR-Score':scores['RAR'],
-                'Portfolio':rec,
-                'AI_Rationale':scores['Rationale']
-            })
-    return pd.DataFrame(results)
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, f"CMEF X Analyse Rapport - {coin_name} ({ticker})", ln=True, align="C")
+    
+    pdf.set_font("Arial", '', 12)
+    pdf.cell(0, 10, f"Analyse datum & tijd: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", ln=True)
+    pdf.cell(0, 10, f"Profiel: {profile}", ln=True)
+    
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(0, 10, "📊 Scores", ln=True)
+    
+    pdf.set_font("Arial", '', 12)
+    for key in ['K','M','OTS','R','RAR']:
+        pdf.cell(0, 8, f"{key}-Score: {scores[key]}", ln=True)
+    
+    pdf.ln(3)
+    pdf.cell(0, 8, f"Portfolio-aanbeveling: {portfolio_recommendation(scores['RAR'], profile)}", ln=True)
+    
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(0, 10, "📖 Coin-specifieke toelichting", ln=True)
+    
+    pdf.set_font("Arial", '', 12)
+    for key, text in explanations.items():
+        pdf.multi_cell(0, 7, f"{key}: {text}")
+    
+    filename = f"CMEF_X_{coin_name}_{ticker}.pdf"
+    pdf.output(filename)
+    return filename
 
 # ---------------------------
 # Streamlit UI
 # ---------------------------
-st.set_page_config(page_title="CMEF X Pro App", layout="wide")
-st.title("CMEF X Crypto Analysis Tool - PRO")
+st.set_page_config(page_title="CMEF X PRO App", layout="wide")
+st.title("CMEF X Crypto Analysis Tool - FULL PRO")
 
 st.write("**Analyse datum & tijd:**", datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
 
@@ -160,8 +184,10 @@ eur_markets = fetch_eur_markets()
 if not eur_markets:
     st.stop()
 
+# ---------------------------
+# Scores visueel weergeven
+# ---------------------------
 def display_scores(scores):
-    """Progress bars en kleuren"""
     st.subheader("📊 Scores")
     for key in ['K','M','OTS','R','RAR']:
         val = scores[key]
@@ -169,6 +195,9 @@ def display_scores(scores):
         st.progress(min(val/5,1))
         st.markdown(f"**{key}-Score:** <span style='color:{color}'>{val}</span>", unsafe_allow_html=True)
 
+# ---------------------------
+# Enkele coin analyse
+# ---------------------------
 if mode=="Enkele coin":
     market = st.selectbox("Kies cryptocurrency (EUR-paar)", eur_markets)
     if st.button("Analyseer Coin"):
@@ -177,15 +206,30 @@ if mode=="Enkele coin":
             ticker['coin_id'] = market.split('-')[0].lower()
             scores = compute_scores(ticker, alpha, price_max=60000, volume_max=1e9)
             rec = portfolio_recommendation(scores['RAR'], profile)
+            explanations = generate_coin_explanation(scores, profile)
+            
             display_scores(scores)
             st.markdown(f"**Portfolio-aanbeveling:** {rec}")
-            st.subheader("📖 Analyse Rationale")
-            st.json(scores['Rationale'])
+            
+            st.subheader("📖 Coin-specifieke toelichting")
+            for key, text in explanations.items():
+                st.markdown(f"**{key}:** {text}")
+                
+            # PDF export knop
+            if st.button("Exporteer analyse naar PDF"):
+                filename = generate_pdf_report(market.split('-')[0], market, scores, explanations, profile)
+                with open(filename, "rb") as f:
+                    st.download_button("Download PDF", f, file_name=filename, mime="application/pdf")
         else:
             st.error("Kon data niet ophalen.")
+
+# ---------------------------
+# Batch analyse
+# ---------------------------
 else:
     if st.button("Batch analyse alle coins"):
-        df_batch = batch_analyze(eur_markets, alpha, profile)
+        df_batch = pd.DataFrame()
+        df_batch = df_batch.append(batch_analyze(eur_markets, alpha, profile))
         st.dataframe(df_batch.sort_values('RAR-Score',ascending=False))
         st.download_button("Exporteer naar CSV",
                            df_batch.sort_values('RAR-Score',ascending=False).to_csv(index=False).encode('utf-8'),
