@@ -12,29 +12,28 @@ COINGECKO_API_URL = "https://api.coingecko.com/api/v3"
 # Helper functions
 # ---------------------------
 def fetch_bitvavo_markets():
-    """Fetch all EUR markets from Bitvavo"""
     try:
         resp = requests.get(f"{BITVAVO_API_URL}/markets", timeout=5)
         resp.raise_for_status()
         markets = resp.json()
         eur_markets = [m['market'] for m in markets if m['quote'] == 'EUR']
         return eur_markets
-    except:
+    except Exception as e:
+        st.warning(f"Bitvavo market fetch failed: {e}")
         return []
 
 def fetch_ticker(market):
-    """Fetch Bitvavo ticker (last price and 24h volume)"""
     try:
         resp = requests.get(f"{BITVAVO_API_URL}/{market}/ticker", timeout=5)
         if resp.status_code != 200:
             return None
         data = resp.json()
         return {'last': float(data['last']), 'volume': float(data['volume'])}
-    except:
+    except Exception as e:
+        st.warning(f"Bitvavo ticker fetch failed: {e}")
         return None
 
 def fetch_coingecko_data(symbol):
-    """Fetch CoinGecko market data"""
     try:
         resp = requests.get(f"{COINGECKO_API_URL}/coins/{symbol.lower()}", timeout=5)
         if resp.status_code != 200:
@@ -50,30 +49,31 @@ def fetch_coingecko_data(symbol):
             'twitter_followers': twitter_followers,
             'reddit_subs': reddit_subs
         }
-    except:
+    except Exception as e:
+        st.warning(f"CoinGecko fetch failed: {e}")
         return {'market_cap':0,'price_30d_change':0,'twitter_followers':0,'reddit_subs':0}
 
 # ---------------------------
 # CMEF X computation
 # ---------------------------
 def compute_cmef_x(price, volume_eur, cg_data, alpha):
-    # K-Score: Investment Quality
-    A1_market_cap = min(cg_data['market_cap'] / 1e10, 5)  # proxy scaling
+    # K-Score
+    A1_market_cap = min(cg_data['market_cap'] / 1e10, 5)
     A5_volume = min(volume_eur / 1e9, 5)
-    A15_perf = min(max((cg_data['price_30d_change'] + 50)/20, 0), 5)  # rough scaling -50..50%
-    K = round((A1_market_cap + A5_volume + A15_perf)/3, 2)
+    A15_perf = min(max((cg_data['price_30d_change'] + 50)/20, 0), 5)
+    K = round((A1_market_cap + A5_volume + A15_perf)/3,2)
 
-    # M-Score: Growth Potential
-    B1_github = 0  # no GitHub input
-    B6_community = min((cg_data['twitter_followers']/1e6 + cg_data['reddit_subs']/1e5), 5)
-    B5_incentives = 2.5  # placeholder
-    M = round((B1_github + B6_community + B5_incentives)/3, 2)
+    # M-Score
+    B1_github = 0
+    B6_community = min((cg_data['twitter_followers']/1e6 + cg_data['reddit_subs']/1e5),5)
+    B5_incentives = 2.5
+    M = round((B1_github + B6_community + B5_incentives)/3,2)
 
     # OTS
     OTS = round(K*alpha + M*(1-alpha),2)
 
     # R-Score
-    R_tech = 0.5  # placeholder
+    R_tech = 0.5
     R_reg = 0.3
     R_fin = 0.4
     R = round(R_tech*0.4 + R_reg*0.35 + R_fin*0.25,2)
@@ -81,7 +81,6 @@ def compute_cmef_x(price, volume_eur, cg_data, alpha):
     # RAR
     RAR = round(OTS*(1-R),2)
 
-    # Rationale
     rationale = {
         'A1_market_cap': A1_market_cap,
         'A5_volume': A5_volume,
@@ -121,21 +120,30 @@ profile = st.selectbox("Select investment profile:", ["Conservative", "Balanced"
 alpha_dict = {"Conservative":0.7, "Balanced":0.6, "Growth":0.5}
 alpha = alpha_dict[profile]
 
-# Resolve symbol & Bitvavo market
-symbol = crypto_selection.split()[1].upper()  # e.g., "BTC"
+# Resolve symbol & Bitvavo market dynamically
+symbol = crypto_selection.split()[1].upper()
 eur_markets = fetch_bitvavo_markets()
 market = next((m for m in eur_markets if m.startswith(symbol)), None)
 
 st.info("Fetching live data from Bitvavo & CoinGecko... please wait.")
 
+# Fetch data with fallback
 ticker = fetch_ticker(market) if market else None
 cg_data = fetch_coingecko_data(symbol)
 
+# ---------------------------
+# Debug panel
+# ---------------------------
+with st.expander("Debug / Raw Data"):
+    st.write(f"Resolved Bitvavo market: {market}")
+    st.write(f"Ticker data: {ticker}")
+    st.write(f"CoinGecko data: {cg_data}")
+
 if ticker is None and cg_data is None:
-    st.error(f"Could not fetch live data for {symbol}. Try another coin or check your connection.")
+    st.error(f"Could not fetch live data for {symbol}. Check your connection or select another coin.")
 else:
     # Determine price & volume
-    price = ticker['last'] if ticker else cg_data.get('market_cap', 0)/1e6  # fallback
+    price = ticker['last'] if ticker else cg_data.get('market_cap',0)/1e6
     volume_eur = ticker['volume']*price if ticker else 0
 
     # Compute CMEF X scores
@@ -154,16 +162,11 @@ else:
 
     # Score bars
     st.subheader("Score Visual Summary")
-    st.progress(min(K/5,1))
-    st.text("K-Score")
-    st.progress(min(M/5,1))
-    st.text("M-Score")
-    st.progress(min(OTS/5,1))
-    st.text("OTS")
-    st.progress(min(R/1,1))
-    st.text("R-Score")
-    st.progress(min(RAR/5,1))
-    st.text("RAR (risk-adjusted)")
+    st.progress(min(K/5,1)); st.text("K-Score")
+    st.progress(min(M/5,1)); st.text("M-Score")
+    st.progress(min(OTS/5,1)); st.text("OTS")
+    st.progress(min(R/1,1)); st.text("R-Score")
+    st.progress(min(RAR/5,1)); st.text("RAR (risk-adjusted)")
 
     # Full CMEF X Report
     st.subheader("Full CMEF X Report")
