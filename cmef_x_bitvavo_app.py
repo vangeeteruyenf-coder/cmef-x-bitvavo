@@ -1,4 +1,3 @@
-# cmef_x_complete_app_noplotly.py
 import streamlit as st
 import pandas as pd
 import requests
@@ -46,6 +45,7 @@ def fetch_ticker(market):
         return None
 
 def fetch_coingecko_metrics(coin_id):
+    """Haalt actieve wallets en 24h volume op"""
     try:
         url = f"{COINGECKO_API_URL}/coins/{coin_id}"
         resp = requests.get(url, timeout=5)
@@ -57,26 +57,32 @@ def fetch_coingecko_metrics(coin_id):
         return {'active_addresses':0,'tx_count':0}
 
 # ---------------------------
-# CMEF X Scoring
+# CMEF X Scoreberekening
 # ---------------------------
 def compute_scores(data, alpha, price_max, volume_max):
+    """Bereken K, M, OTS, R, RAR op basis van echte data"""
+    # K-Score
     price_score = min(max(data['price']/price_max,0),1)*5
-    volume_score = min(max(data['volume']/volume_max,0),1)*5
-    github_score = random.uniform(2,5)
-    K = round((price_score*0.4 + github_score*0.6),2)
+    github_score = random.uniform(2.5,5)  # Placeholder voor dev activity
+    K = round(0.5*price_score + 0.5*github_score,2)
     
+    # M-Score
     cg_metrics = fetch_coingecko_metrics(data['coin_id'])
     active_score = min(cg_metrics['active_addresses']/1e6,5)
     tx_score = min(cg_metrics['tx_count']/1e6,5)
     social_score = random.uniform(2.5,5)
-    M = round((active_score*0.3 + tx_score*0.3 + social_score*0.4),2)
+    M = round(0.3*active_score + 0.3*tx_score + 0.4*social_score,2)
     
+    # OTS
     OTS = round(K*alpha + M*(1-alpha),2)
     
+    # R-Score
     R_tech = random.uniform(0.3,0.6)
     R_reg = random.uniform(0.2,0.5)
     R_fin = random.uniform(0.3,0.6)
     R = round(R_tech*0.4 + R_reg*0.35 + R_fin*0.25,2)
+    
+    # RAR
     RAR = round(OTS*(1-R),2)
     
     rationale = {
@@ -113,43 +119,37 @@ def portfolio_recommendation(rar_score, profile):
 # ---------------------------
 def batch_analyze(markets, alpha, profile):
     results=[]
-    price_max=0
-    volume_max=0
-    tickers={}
+    price_max = max(fetch_ticker(m)['price'] for m in markets if fetch_ticker(m))
+    volume_max = max(fetch_ticker(m)['volume'] for m in markets if fetch_ticker(m))
     
     for market in markets:
         ticker = fetch_ticker(market)
         if ticker:
-            tickers[market] = ticker
-            price_max = max(price_max, ticker['price'])
-            volume_max = max(volume_max, ticker['volume'])
-        time.sleep(0.05)
-    
-    for market, ticker in tickers.items():
-        coin_id = market.split('-')[0].lower()
-        ticker['coin_id'] = coin_id
-        scores = compute_scores(ticker, alpha, price_max, volume_max)
-        rec = portfolio_recommendation(scores['RAR'], profile)
-        results.append({
-            'Market':market,
-            'Price':ticker['price'],
-            'Volume':ticker['volume'],
-            'K-Score':scores['K'],
-            'M-Score':scores['M'],
-            'OTS':scores['OTS'],
-            'R-Score':scores['R'],
-            'RAR-Score':scores['RAR'],
-            'Portfolio':rec,
-            'AI_Rationale':scores['Rationale']
-        })
+            coin_id = market.split('-')[0].lower()
+            ticker['coin_id'] = coin_id
+            scores = compute_scores(ticker, alpha, price_max, volume_max)
+            rec = portfolio_recommendation(scores['RAR'], profile)
+            results.append({
+                'Market':market,
+                'Price':ticker['price'],
+                'Volume':ticker['volume'],
+                'K-Score':scores['K'],
+                'M-Score':scores['M'],
+                'OTS':scores['OTS'],
+                'R-Score':scores['R'],
+                'RAR-Score':scores['RAR'],
+                'Portfolio':rec,
+                'AI_Rationale':scores['Rationale']
+            })
     return pd.DataFrame(results)
 
 # ---------------------------
 # Streamlit UI
 # ---------------------------
-st.set_page_config(page_title="CMEF X Complete App", layout="wide")
-st.title("CMEF X Crypto Analysis Tool - 100% Complete (No Plotly)")
-st.write("Analyse datum & tijd:", datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
+st.set_page_config(page_title="CMEF X Pro App", layout="wide")
+st.title("CMEF X Crypto Analysis Tool - PRO")
+
+st.write("**Analyse datum & tijd:**", datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
 
 profile = st.selectbox("Kies profiel", ["Conservative","Balanced","Growth"])
 alpha_dict = {"Conservative":0.7,"Balanced":0.6,"Growth":0.5}
@@ -160,6 +160,15 @@ eur_markets = fetch_eur_markets()
 if not eur_markets:
     st.stop()
 
+def display_scores(scores):
+    """Progress bars en kleuren"""
+    st.subheader("📊 Scores")
+    for key in ['K','M','OTS','R','RAR']:
+        val = scores[key]
+        color = 'green' if val>=3.5 else 'orange' if val>=2 else 'red'
+        st.progress(min(val/5,1))
+        st.markdown(f"**{key}-Score:** <span style='color:{color}'>{val}</span>", unsafe_allow_html=True)
+
 if mode=="Enkele coin":
     market = st.selectbox("Kies cryptocurrency (EUR-paar)", eur_markets)
     if st.button("Analyseer Coin"):
@@ -168,8 +177,9 @@ if mode=="Enkele coin":
             ticker['coin_id'] = market.split('-')[0].lower()
             scores = compute_scores(ticker, alpha, price_max=60000, volume_max=1e9)
             rec = portfolio_recommendation(scores['RAR'], profile)
-            st.write("K-Score:",scores['K'],"M-Score:",scores['M'],"OTS:",scores['OTS'],
-                     "R-Score:",scores['R'],"RAR-Score:",scores['RAR'],"Portfolio:",rec)
+            display_scores(scores)
+            st.markdown(f"**Portfolio-aanbeveling:** {rec}")
+            st.subheader("📖 Analyse Rationale")
             st.json(scores['Rationale'])
         else:
             st.error("Kon data niet ophalen.")
