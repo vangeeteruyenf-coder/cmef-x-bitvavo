@@ -12,6 +12,7 @@ COINGECKO_API_URL = "https://api.coingecko.com/api/v3"
 # Helper functions
 # ---------------------------
 def fetch_bitvavo_markets():
+    """Fetch all EUR markets from Bitvavo"""
     try:
         resp = requests.get(f"{BITVAVO_API_URL}/markets", timeout=5)
         resp.raise_for_status()
@@ -22,6 +23,7 @@ def fetch_bitvavo_markets():
         return []
 
 def fetch_ticker(market):
+    """Fetch Bitvavo ticker (last price and 24h volume)"""
     try:
         resp = requests.get(f"{BITVAVO_API_URL}/{market}/ticker", timeout=5)
         if resp.status_code != 200:
@@ -32,6 +34,7 @@ def fetch_ticker(market):
         return None
 
 def fetch_coingecko_data(symbol):
+    """Fetch CoinGecko market data"""
     try:
         resp = requests.get(f"{COINGECKO_API_URL}/coins/{symbol.lower()}", timeout=5)
         if resp.status_code != 200:
@@ -61,9 +64,9 @@ def compute_cmef_x(price, volume_eur, cg_data, alpha):
     K = round((A1_market_cap + A5_volume + A15_perf)/3, 2)
 
     # M-Score: Growth Potential
-    B1_github = 0  # no GitHub input in this version
+    B1_github = 0  # no GitHub input
     B6_community = min((cg_data['twitter_followers']/1e6 + cg_data['reddit_subs']/1e5), 5)
-    B5_incentives = 2.5  # default placeholder
+    B5_incentives = 2.5  # placeholder
     M = round((B1_github + B6_community + B5_incentives)/3, 2)
 
     # OTS
@@ -106,35 +109,42 @@ def portfolio_recommendation(rar_score, profile):
 # ---------------------------
 # Streamlit UI
 # ---------------------------
-st.set_page_config(page_title="CMEF X Crypto Dashboard", layout="wide")
-st.title("🪙 CMEF X — Free Crypto Analysis Dashboard (Auto-resolve)")
+st.set_page_config(page_title="CMEF X — Free Crypto Analysis Dashboard", layout="wide")
+st.title("🪙 CMEF X — Free Crypto Analysis Dashboard")
 
 # Inputs
-crypto_selection = st.selectbox("Select cryptocurrency:", ["Bitcoin BTC", "Ethereum ETH", "Aave AAVE", "Cardano ADA"])
+crypto_selection = st.selectbox(
+    "Select cryptocurrency:", 
+    ["Bitcoin BTC", "Ethereum ETH", "Aave AAVE", "Cardano ADA"]
+)
 profile = st.selectbox("Select investment profile:", ["Conservative", "Balanced", "Growth"])
 alpha_dict = {"Conservative":0.7, "Balanced":0.6, "Growth":0.5}
 alpha = alpha_dict[profile]
 
 # Resolve symbol & Bitvavo market
-symbol = crypto_selection.split()[1]  # e.g., "BTC" from "Bitcoin BTC"
-market = f"{symbol}-EUR"
+symbol = crypto_selection.split()[1].upper()  # e.g., "BTC"
+eur_markets = fetch_bitvavo_markets()
+market = next((m for m in eur_markets if m.startswith(symbol)), None)
 
-st.info("Fetching data from Bitvavo & CoinGecko... please wait.")
+st.info("Fetching live data from Bitvavo & CoinGecko... please wait.")
 
-ticker = fetch_ticker(market)
+ticker = fetch_ticker(market) if market else None
 cg_data = fetch_coingecko_data(symbol)
 
-if ticker is None:
-    st.error(f"Could not fetch Bitvavo ticker for {market}.")
+if ticker is None and cg_data is None:
+    st.error(f"Could not fetch live data for {symbol}. Try another coin or check your connection.")
 else:
-    price = ticker['last']
-    volume_eur = ticker['volume'] * price
+    # Determine price & volume
+    price = ticker['last'] if ticker else cg_data.get('market_cap', 0)/1e6  # fallback
+    volume_eur = ticker['volume']*price if ticker else 0
+
+    # Compute CMEF X scores
     K, M, OTS, R, RAR, rationale = compute_cmef_x(price, volume_eur, cg_data, alpha)
     rec = portfolio_recommendation(RAR, profile)
 
     # Live Market & Scores
     st.subheader("Live Market & CMEF X Summary")
-    st.metric("Market (Bitvavo)", market)
+    st.metric("Market", market or "CoinGecko fallback")
     st.metric("Current Price (EUR)", f"€{price:,.2f}")
     st.metric("K-Score", f"{K}/5")
     st.metric("M-Score", f"{M}/5")
