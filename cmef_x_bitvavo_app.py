@@ -1,11 +1,10 @@
-# cmef_x_complete_app.py
+# cmef_x_complete_app_noplotly.py
 import streamlit as st
 import pandas as pd
 import requests
 import time
 from datetime import datetime
 import random
-import plotly.express as px
 
 # ---------------------------
 # Config
@@ -149,7 +148,7 @@ def batch_analyze(markets, alpha, profile):
 # Streamlit UI
 # ---------------------------
 st.set_page_config(page_title="CMEF X Complete App", layout="wide")
-st.title("CMEF X Crypto Analysis Tool - 100% Complete")
+st.title("CMEF X Crypto Analysis Tool - 100% Complete (No Plotly)")
 st.write("Analyse datum & tijd:", datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
 
 profile = st.selectbox("Kies profiel", ["Conservative","Balanced","Growth"])
@@ -181,6 +180,3 @@ else:
         st.download_button("Exporteer naar CSV",
                            df_batch.sort_values('RAR-Score',ascending=False).to_csv(index=False).encode('utf-8'),
                            "cmef_x_batch.csv","text/csv")
-        fig = px.bar(df_batch.sort_values('RAR-Score',ascending=False).head(20),
-                     x='Market', y='RAR-Score', color='RAR-Score', title="Top 20 RAR-Score Coins")
-        st.plotly_chart(fig, use_container_width=True)
