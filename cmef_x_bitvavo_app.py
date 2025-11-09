@@ -1,4 +1,4 @@
-# cmef_x_bitvavo_full_v2.py
+# cmef_x_bitvavo_full_debug.py
 import streamlit as st
 import pandas as pd
 import requests
@@ -17,25 +17,28 @@ def fetch_eur_markets():
         resp.raise_for_status()
         markets = resp.json()
         eur_markets = [m['market'] for m in markets if m['quote'] == 'EUR']
+        st.info(f"EUR-markets opgehaald: {len(eur_markets)} coins")
         return eur_markets
     except Exception as e:
         st.error(f"Kan Bitvavo markets niet ophalen: {e}")
         return []
 
 def fetch_ticker(market, retries=3):
-    """Haalt live prijs en volume op met retry, fallback bij 404"""
+    """Haalt live prijs en 24h volume op met retry, fallback bij 404"""
     for attempt in range(1, retries+1):
         try:
+            # Primary endpoint
             url = f"{BITVAVO_API_URL}/{market}/ticker"
             resp = requests.get(url, timeout=5)
             if resp.status_code == 404:
-                st.warning(f"Attempt {attempt} voor {market}: 404, probeer alternate endpoint")
-                alt_url = f"{BITVAVO_API_URL}/ticker/price?market={market}"
+                st.warning(f"Attempt {attempt} voor {market}: 404, probeer fallback /ticker/24h endpoint")
+                alt_url = f"{BITVAVO_API_URL}/ticker/24h?market={market}"
                 alt_resp = requests.get(alt_url, timeout=5)
                 if alt_resp.status_code == 200:
                     data = alt_resp.json()
-                    return {'price': float(data.get('price',0)), 'volume': 0}
+                    return {'price': float(data.get('last',0)), 'volume': float(data.get('volume',0))}
                 else:
+                    st.warning(f"Fallback attempt {attempt} voor {market} mislukte: status {alt_resp.status_code}")
                     time.sleep(1)
                     continue
             elif resp.status_code != 200:
@@ -51,6 +54,7 @@ def fetch_ticker(market, retries=3):
         except Exception as e:
             st.warning(f"Attempt {attempt} voor {market} exception: {e}")
             time.sleep(1)
+    st.error(f"⚠️ Kon data niet ophalen voor {market} na {retries} attempts")
     return None
 
 def normalize(value, min_val, max_val):
@@ -116,8 +120,8 @@ def batch_analyze_debug(markets, alpha):
 # ---------------------------
 # Streamlit UI
 # ---------------------------
-st.set_page_config(page_title="CMEF X Bitvavo Full v2", layout="wide")
-st.title("CMEF X Crypto Analysis Tool (Bitvavo) - Full Test V2")
+st.set_page_config(page_title="CMEF X Bitvavo Full Debug", layout="wide")
+st.title("CMEF X Crypto Analysis Tool (Bitvavo) - Full Debug")
 
 # Datum & tijd
 st.write("**Analyse datum & tijd:**", datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
@@ -155,6 +159,6 @@ else:
             st.success(f"Batch-analyse klaar! {len(df_batch)} coins geanalyseerd.")
             st.dataframe(df_batch.sort_values('RAR-Score',ascending=False))
             if st.button("Exporteer batch naar CSV"):
-                filename="cmef_x_batch_full_v2.csv"
+                filename="cmef_x_batch_full_debug.csv"
                 df_batch.to_csv(filename,index=False)
                 st.success(f"CSV opgeslagen: {filename}")
