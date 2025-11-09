@@ -1,4 +1,4 @@
-# cmef_x_bitvavo_full_test.py
+# cmef_x_bitvavo_full_v2.py
 import streamlit as st
 import pandas as pd
 import requests
@@ -23,11 +23,22 @@ def fetch_eur_markets():
         return []
 
 def fetch_ticker(market, retries=3):
-    """Haalt live prijs en volume op met retry en logging"""
+    """Haalt live prijs en volume op met retry, fallback bij 404"""
     for attempt in range(1, retries+1):
         try:
-            resp = requests.get(f"{BITVAVO_API_URL}/{market}/ticker", timeout=5)
-            if resp.status_code != 200:
+            url = f"{BITVAVO_API_URL}/{market}/ticker"
+            resp = requests.get(url, timeout=5)
+            if resp.status_code == 404:
+                st.warning(f"Attempt {attempt} voor {market}: 404, probeer alternate endpoint")
+                alt_url = f"{BITVAVO_API_URL}/ticker/price?market={market}"
+                alt_resp = requests.get(alt_url, timeout=5)
+                if alt_resp.status_code == 200:
+                    data = alt_resp.json()
+                    return {'price': float(data.get('price',0)), 'volume': 0}
+                else:
+                    time.sleep(1)
+                    continue
+            elif resp.status_code != 200:
                 st.warning(f"Attempt {attempt} voor {market} mislukte: status {resp.status_code}")
                 time.sleep(1)
                 continue
@@ -60,14 +71,12 @@ def compute_scores(data, alpha):
 # ---------------------------
 def test_coin(market):
     st.subheader(f"🔍 Test coin: {market}")
-    # 1️⃣ Check market aanwezig
     eur_markets = fetch_eur_markets()
     if market not in eur_markets:
         st.error(f"{market} niet gevonden in EUR-markets!")
         return None
     st.success(f"{market} aanwezig in EUR-markets.")
     
-    # 2️⃣ Fetch ticker met retry
     data = fetch_ticker(market)
     if not data:
         st.error(f"⚠️ Kon data niet ophalen voor {market}.")
@@ -107,8 +116,8 @@ def batch_analyze_debug(markets, alpha):
 # ---------------------------
 # Streamlit UI
 # ---------------------------
-st.set_page_config(page_title="CMEF X Bitvavo Full Test", layout="wide")
-st.title("CMEF X Crypto Analysis Tool (Bitvavo) - Test Mode")
+st.set_page_config(page_title="CMEF X Bitvavo Full v2", layout="wide")
+st.title("CMEF X Crypto Analysis Tool (Bitvavo) - Full Test V2")
 
 # Datum & tijd
 st.write("**Analyse datum & tijd:**", datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
@@ -146,6 +155,6 @@ else:
             st.success(f"Batch-analyse klaar! {len(df_batch)} coins geanalyseerd.")
             st.dataframe(df_batch.sort_values('RAR-Score',ascending=False))
             if st.button("Exporteer batch naar CSV"):
-                filename="cmef_x_batch_full_test.csv"
+                filename="cmef_x_batch_full_v2.csv"
                 df_batch.to_csv(filename,index=False)
                 st.success(f"CSV opgeslagen: {filename}")
